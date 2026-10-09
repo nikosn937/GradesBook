@@ -86,6 +86,11 @@ st.set_page_config(page_title="Online Βαθμολόγιο", page_icon="📝", l
 if "user" not in st.session_state:
     st.session_state.user = None
 
+# Διαχείριση μηνυμάτων ειδοποίησης μετά από rerun
+if "flash_msg" in st.session_state:
+    st.success(st.session_state.flash_msg)
+    del st.session_state["flash_msg"]
+
 # ------------------------------------------------------------------------------
 # ΣΕΛΙΔΕΣ ΣΥΝΔΕΣΗΣ / ΕΓΓΡΑΦΗΣ
 # ------------------------------------------------------------------------------
@@ -150,7 +155,7 @@ else:
             if st.button("Προσθήκη Σχολείου"):
                 if new_school.strip():
                     run_query("INSERT INTO dbo.Schools (UserID, SchoolName) VALUES (%s, %s)", (user_id, new_school.strip()), commit=True)
-                    st.success("Το σχολείο προστέθηκε!")
+                    st.session_state.flash_msg = "Το σχολείο προστέθηκε επιτυχώς!"
                     st.rerun()
             
             schools = run_query("SELECT SchoolID, SchoolName FROM dbo.Schools WHERE UserID = %s", (user_id,), fetchall=True)
@@ -165,7 +170,7 @@ else:
             if st.button("Προσθήκη Μαθήματος"):
                 if new_subject.strip():
                     run_query("INSERT INTO dbo.Subjects (UserID, SubjectName) VALUES (%s, %s)", (user_id, new_subject.strip()), commit=True)
-                    st.success("Το μάθημα προστέθηκε!")
+                    st.session_state.flash_msg = "Το μάθημα προστέθηκε επιτυχώς!"
                     st.rerun()
             
             subjects = run_query("SELECT SubjectID, SubjectName FROM dbo.Subjects WHERE UserID = %s", (user_id,), fetchall=True)
@@ -173,7 +178,7 @@ else:
                 df_subjects = pd.DataFrame(subjects, columns=["ID", "Όνομα Μαθήματος"])
                 st.dataframe(df_subjects, use_container_width=True)
 
-        st.divider()  # Διορθωμένο (αντί για st.hr)
+        st.divider()
         st.subheader("➕ Δημιουργία Νέου Βαθμολογίου / Τμήματος")
         
         if schools and subjects:
@@ -198,7 +203,7 @@ else:
                             (user_id, school_dict[sel_school], subject_dict[sel_subject], class_name.strip(), academic_year, term),
                             commit=True
                         )
-                        st.success(f"Δημιουργήθηκε το βαθμολόγιο για το τμήμα {class_name} ({sel_subject})!")
+                        st.session_state.flash_msg = f"✅ Δημιουργήθηκε επιτυχώς το βαθμολόγιο για το τμήμα {class_name} ({sel_subject})!"
                         st.rerun()
                     else:
                         st.error("Παρακαλώ συμπληρώστε το όνομα του τμήματος.")
@@ -238,12 +243,13 @@ else:
             ])
             
             # ------------------------------------------------------------------
-            # TAB 1: ΚΑΤΗΓΟΡΙΕΣ ΒΑΘΜΟΛΟΓΗΣΗΣ & ΒΑΡΥΤΗΤΕΣ
+            # TAB 1: ΚΑΤΗΓΟΡΙΕΣ ΒΑΘΜΟΛΟΓΗΣΗΣ & ΒΑΡΥΤΗΤΕΣ (ΜΕ ΔΙΑΓΡΑΦΗ/ΕΠΕΞΕΡΓΑΣΙΑ)
             # ------------------------------------------------------------------
             with tab_cat:
                 st.subheader("Ορισμός Κατηγοριών Βαθμολόγησης")
                 st.caption("Ορίστε τις κατηγορίες (π.χ. Διαγώνισμα, Συμμετοχή) και τα ποσοστά βαρύτητας. Το άθροισμα πρέπει να είναι 100%.")
                 
+                # Φόρμα Προσθήκης Νέας Κατηγορίας
                 col_cat1, col_cat2 = st.columns([2, 1])
                 cat_name = col_cat1.text_input("Όνομα Κατηγορίας", placeholder="π.χ. Διαγώνισμα A' Τετραμήνου")
                 weight = col_cat2.number_input("Βαρύτητα (%)", min_value=1.0, max_value=100.0, value=20.0, step=1.0)
@@ -254,8 +260,11 @@ else:
                             "INSERT INTO dbo.GradingCategories (ClassSubjectID, CategoryName, WeightPercentage) VALUES (%s, %s, %s)",
                             (class_subject_id, cat_name.strip(), weight), commit=True
                         )
-                        st.success("Η κατηγορία προστέθηκε!")
+                        st.session_state.flash_msg = "Η κατηγορία προστέθηκε επιτυχώς!"
                         st.rerun()
+
+                st.divider()
+                st.write("### Υπάρχουσες Κατηγορίες")
                 
                 categories = run_query(
                     "SELECT CategoryID, CategoryName, WeightPercentage FROM dbo.GradingCategories WHERE ClassSubjectID = %s",
@@ -263,17 +272,40 @@ else:
                 )
                 
                 if categories:
-                    df_cat = pd.DataFrame(categories, columns=["ID", "Κατηγορία", "Βαρύτητα (%)"])
-                    st.dataframe(df_cat, use_container_width=True)
+                    total_weight = sum([float(c[2]) for c in categories])
                     
-                    total_weight = df_cat["Βαρύτητα (%)"].sum()
+                    # Προβολή κάθε κατηγορίας με δυνατότητα Επεξεργασίας & Διαγραφής
+                    for cat in categories:
+                        cat_id, name_val, weight_val = cat[0], cat[1], float(cat[2])
+                        
+                        col_name, col_w, col_btn_edit, col_btn_del = st.columns([3, 2, 1, 1])
+                        
+                        new_name = col_name.text_input("Όνομα", value=name_val, key=f"cat_name_{cat_id}")
+                        new_weight = col_w.number_input("Βαρύτητα (%)", min_value=1.0, max_value=100.0, value=weight_val, step=1.0, key=f"cat_w_{cat_id}")
+                        
+                        # Κουμπί Ενημέρωσης
+                        if col_btn_edit.button("💾 Αποθήκευση", key=f"save_cat_{cat_id}"):
+                            run_query(
+                                "UPDATE dbo.GradingCategories SET CategoryName = %s, WeightPercentage = %s WHERE CategoryID = %s",
+                                (new_name.strip(), new_weight, cat_id), commit=True
+                            )
+                            st.session_state.flash_msg = "Η κατηγορία ενημερώθηκε!"
+                            st.rerun()
+                            
+                        # Κουμπί Διαγραφής
+                        if col_btn_del.button("🗑️ Διαγραφή", key=f"del_cat_{cat_id}"):
+                            run_query("DELETE FROM dbo.GradingCategories WHERE CategoryID = %s", (cat_id,), commit=True)
+                            st.session_state.flash_msg = "Η κατηγορία διαγράφηκε!"
+                            st.rerun()
+
+                    st.markdown("---")
                     if total_weight == 100.0:
-                        st.success(f"✅ Συνολική Βαρύτητα: {total_weight:.1f}% (Έτοιμο για υπολογισμούς)")
+                        st.success(f"✅ Συνολική Βαρύτητα: **{total_weight:.1f}%** (Έτοιμο για υπολογισμούς)")
                     else:
-                        st.error(f"⚠️ Συνολική Βαρύτητα: {total_weight:.1f}%. Πρέπει το άθροισμα να ισούται ακριβώς με 100%!")
+                        st.error(f"⚠️ Συνολική Βαρύτητα: **{total_weight:.1f}%**. Πρέπει το άθροισμα να ισούται ακριβώς με **100%**!")
 
             # ------------------------------------------------------------------
-            # TAB 2: ΕΙΣΑΓΩΓΗ ΜΑΘΗΤΩΝ ΑΠΟ EXCEL
+            # TAB 2: ΕΙΣΑΓΩΓΗ ΜΑΘΗΤΩΝ ΑΠΟ EXCEL (ΜΕ ΜΗΝΥΜΑΤΑ ΕΠΙΤΥΧΙΑΣ)
             # ------------------------------------------------------------------
             with tab_students:
                 st.subheader("Φόρτωση Μαθητών από Αρχείο Excel / CSV")
@@ -291,7 +323,7 @@ else:
                         st.write("Προεπισκόπηση Αρχείου:", df_excel.head())
                         
                         if "Ονοματεπώνυμο" in df_excel.columns:
-                            if st.button("Εισαγωγή Μαθητών στη Βάση"):
+                            if st.button("Εισαγωγή Μαθητών στη Βάση", type="primary"):
                                 count = 0
                                 for _, row in df_excel.iterrows():
                                     full_name = str(row["Ονοματεπώνυμο"]).strip()
@@ -303,7 +335,7 @@ else:
                                             (class_subject_id, am, full_name), commit=True
                                         )
                                         count += 1
-                                st.success(f"Εισήχθησαν επιτυχώς {count} μαθητές!")
+                                st.session_state.flash_msg = f"🎉 Εισήχθησαν επιτυχώς {count} μαθητές στη βάση δεδομένων!"
                                 st.rerun()
                         else:
                             st.error("Δεν βρέθηκε η στήλη 'Ονοματεπώνυμο' στο αρχείο.")
@@ -320,10 +352,18 @@ else:
                     st.dataframe(df_std, use_container_width=True)
 
             # ------------------------------------------------------------------
-            # TAB 3: ΚΑΤΑΧΩΡΗΣΗ ΒΑΘΜΩΝ & ΑΥΤΟΜΑΤΟΣ ΥΠΟΛΟΓΙΣΜΟΣ
+            # TAB 3: ΚΑΤΑΧΩΡΗΣΗ ΒΑΘΜΩΝ (0-20 & VALIDATION)
             # ------------------------------------------------------------------
             with tab_grades:
                 st.subheader("Πίνακας Βαθμολογίας")
+                
+                # ΚΟΚΚΙΝΗ ΕΠΙΣΗΜΑΝΣΗ ΓΙΑ ΚΛΙΜΑΚΑ 0 - 20
+                st.markdown(
+                    "<h4 style='color: #d9534f; background-color: #fdf7f7; padding: 10px; border-radius: 5px; border-left: 5px solid #d9534f;'>"
+                    "⚠️ ΠΡΟΣΟΧΗ: Οι βαθμοί πρέπει να καταχωρούνται στην κλίμακα 0 έως 20 (ΌΧΙ 0 - 10)!"
+                    "</h4>",
+                    unsafe_allow_html=True
+                )
                 
                 categories = run_query(
                     "SELECT CategoryID, CategoryName, WeightPercentage FROM dbo.GradingCategories WHERE ClassSubjectID = %s",
@@ -387,29 +427,49 @@ else:
                     )
                     
                     if st.button("💾 Αποθήκευση Βαθμών", type="primary"):
-                        conn = get_connection()
-                        cursor = conn.cursor()
+                        invalid_entries = []
                         
+                        # 1. Έλεγχος Εγκυρότητας Βαθμών (0 - 20)
                         for _, row in edited_df.iterrows():
-                            std_id = row["StudentID"]
+                            student_name = row["Ονοματεπώνυμο"]
                             for cat_id, col_title in cat_map.items():
                                 val = row[col_title]
-                                score_val = float(val) if pd.notna(val) and str(val).strip() != "" else None
-                                
-                                cursor.execute(
-                                    """
-                                    MERGE dbo.Grades AS target
-                                    USING (SELECT %s AS StudentID, %s AS CategoryID) AS source
-                                    ON (target.StudentID = source.StudentID AND target.CategoryID = source.CategoryID)
-                                    WHEN MATCHED THEN
-                                        UPDATE SET Score = %s, UpdatedAt = GETDATE()
-                                    WHEN NOT MATCHED THEN
-                                        INSERT (StudentID, CategoryID, Score) VALUES (source.StudentID, source.CategoryID, %s);
-                                    """,
-                                    (std_id, cat_id, score_val, score_val)
-                                )
-                        conn.commit()
-                        cursor.close()
-                        conn.close()
-                        st.success("Οι βαθμοί αποθηκεύτηκαν επιτυχώς!")
-                        st.rerun()
+                                if pd.notna(val) and str(val).strip() != "":
+                                    try:
+                                        score_val = float(val)
+                                        if score_val < 0 or score_val > 20:
+                                            invalid_entries.append(f"• **{student_name}**: {score_val} στην κατηγορία '{col_title}'")
+                                    except ValueError:
+                                        invalid_entries.append(f"• **{student_name}**: Μη έγκυρη τιμή '{val}'")
+                        
+                        # Αν υπάρχουν λάθος βαθμοί, ακυρώνουμε την αποθήκευση και εμφανίζουμε σφάλμα
+                        if invalid_entries:
+                            st.error("❌ **Η ΑΠΟΘΗΚΕΥΣΗ ΑΚΥΡΩΘΗΚΕ!** Εντοπίστηκαν βαθμοί εκτός ορίων (0 - 20):\n\n" + "\n".join(invalid_entries))
+                        else:
+                            # 2. Αποθήκευση στη βάση αν όλοι οι βαθμοί είναι έγκυροι
+                            conn = get_connection()
+                            cursor = conn.cursor()
+                            
+                            for _, row in edited_df.iterrows():
+                                std_id = row["StudentID"]
+                                for cat_id, col_title in cat_map.items():
+                                    val = row[col_title]
+                                    score_val = float(val) if pd.notna(val) and str(val).strip() != "" else None
+                                    
+                                    cursor.execute(
+                                        """
+                                        MERGE dbo.Grades AS target
+                                        USING (SELECT %s AS StudentID, %s AS CategoryID) AS source
+                                        ON (target.StudentID = source.StudentID AND target.CategoryID = source.CategoryID)
+                                        WHEN MATCHED THEN
+                                            UPDATE SET Score = %s, UpdatedAt = GETDATE()
+                                        WHEN NOT MATCHED THEN
+                                            INSERT (StudentID, CategoryID, Score) VALUES (source.StudentID, source.CategoryID, %s);
+                                        """,
+                                        (std_id, cat_id, score_val, score_val)
+                                    )
+                            conn.commit()
+                            cursor.close()
+                            conn.close()
+                            st.session_state.flash_msg = "💾 Οι βαθμοί αποθηκεύτηκαν επιτυχώς στη βάση δεδομένων!"
+                            st.rerun()
