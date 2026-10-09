@@ -8,23 +8,24 @@ import bcrypt
 # ==============================================================================
 def get_connection():
     """
-    Επιστρέφει σύνδεση με τον SQL Server μέσω pymssql.
-    Διαβάζει τα στοιχεία από το st.secrets (.streamlit/secrets.toml)
+    Διαβάζει τα διαπιστευτήρια ΑΠΟΚΛΕΙΣΤΙΚΑ από το st.secrets
+    (αρχείο .streamlit/secrets.toml ή Settings -> Secrets στο Streamlit Cloud)
     """
-    server = st.secrets.get("DB_SERVER", "your_server_ip_or_domain")
-    database = st.secrets.get("DB_NAME", "your_db_name")
-    username = st.secrets.get("DB_USER", "your_db_user")
-    password = st.secrets.get("DB_PASSWORD", "your_db_password")
+    server = st.secrets["DB_SERVER"]
+    port = int(st.secrets.get("DB_PORT", 1433))
+    database = st.secrets["DB_NAME"]
+    username = st.secrets["DB_USER"]
+    password = st.secrets["DB_PASSWORD"]
     
     return pymssql.connect(
         server=server,
+        port=port,
         user=username,
         password=password,
         database=database,
         charset="UTF-8",
         as_dict=False
     )
-
 def run_query(query, params=(), fetchone=False, fetchall=False, commit=False):
     """Utility function για ασφαλή εκτέλεση SQL ερωτημάτων."""
     conn = get_connection()
