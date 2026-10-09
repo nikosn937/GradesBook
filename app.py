@@ -173,11 +173,10 @@ else:
                 df_subjects = pd.DataFrame(subjects, columns=["ID", "Όνομα Μαθήματος"])
                 st.dataframe(df_subjects, use_container_width=True)
 
-        st.hr()
+        st.divider()  # Διορθωμένο (αντί για st.hr)
         st.subheader("➕ Δημιουργία Νέου Βαθμολογίου / Τμήματος")
         
         if schools and subjects:
-            # Ασφαλής μετατροπή σε dictionary
             school_dict = {str(s[1]): int(s[0]) for s in schools}
             subject_dict = {str(sub[1]): int(sub[0]) for sub in subjects}
             
