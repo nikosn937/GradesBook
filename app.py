@@ -357,8 +357,8 @@ else:
                     df_std = pd.DataFrame(students, columns=["ID", "A.M.", "Ονοματεπώνυμο"])
                     st.dataframe(df_std, use_container_width=True)
 
-      # ------------------------------------------------------------------
-            # TAB 3: ΚΑΤΑΧΩΡΗΣΗ ΒΑΘΜΩΝ (ΜΕ SPINNER & ΑΜΕΣΟ ΥΠΟΛΟΓΙΣΜΟ)
+     # ------------------------------------------------------------------
+            # TAB 3: ΚΑΤΑΧΩΡΗΣΗ ΒΑΘΜΩΝ (ΜΕ POPUP MODAL DIALOG)
             # ------------------------------------------------------------------
             elif selected_tab == "📝 3. Καταχώρηση & Υπολογισμός Βαθμών":
                 st.subheader("Πίνακας Βαθμολογίας")
@@ -435,10 +435,43 @@ else:
                         
                         submit_save = st.form_submit_button("💾 Αποθήκευση Βαθμών", type="primary")
                     
+                    # --- POPUP DIALOG FUNCTION ---
+                    @st.dialog("💾 Αποθήκευση Βαθμών σε Εξέλιξη")
+                    def process_save_modal(df_data):
+                        st.info("Παρακαλώ περιμένετε... Οι βαθμοί αποθηκεύονται στη βάση δεδομένων και υπολογίζεται ο Γενικός Βαθμός.")
+                        with st.spinner("Γίνεται εγγραφή στον SQL Server..."):
+                            conn = get_connection()
+                            cursor = conn.cursor()
+                            
+                            for _, row in df_data.iterrows():
+                                std_id = row["StudentID"]
+                                for cat_id, col_title in cat_map.items():
+                                    val = row[col_title]
+                                    score_val = float(val) if pd.notna(val) and str(val).strip() != "" else None
+                                    
+                                    cursor.execute(
+                                        """
+                                        MERGE dbo.Grades AS target
+                                        USING (SELECT %s AS StudentID, %s AS CategoryID) AS source
+                                        ON (target.StudentID = source.StudentID AND target.CategoryID = source.CategoryID)
+                                        WHEN MATCHED THEN
+                                            UPDATE SET Score = %s, UpdatedAt = GETDATE()
+                                        WHEN NOT MATCHED THEN
+                                            INSERT (StudentID, CategoryID, Score) VALUES (source.StudentID, source.CategoryID, %s);
+                                        """,
+                                        (std_id, cat_id, score_val, score_val)
+                                    )
+                            conn.commit()
+                            cursor.close()
+                            conn.close()
+                            
+                            st.session_state.flash_msg = "💾 Οι βαθμοί αποθηκεύτηκαν επιτυχώς!"
+                            st.rerun()
+
+                    # Έλεγχος κατά το πατημα του κουμπιού
                     if submit_save:
                         invalid_entries = []
                         
-                        # 1. Έλεγχος Εγκυρότητας (0 - 20)
                         for _, row in edited_df.iterrows():
                             student_name = row["Ονοματεπώνυμο"]
                             for cat_id, col_title in cat_map.items():
@@ -454,32 +487,5 @@ else:
                         if invalid_entries:
                             st.error("❌ **Η ΑΠΟΘΗΚΕΥΣΗ ΑΚΥΡΩΘΗΚΕ!** Εντοπίστηκαν βαθμοί εκτός ορίων (0 - 20):\n\n" + "\n".join(invalid_entries))
                         else:
-                            # 2. Χρήση st.spinner για να δείχνει στον χρήστη ότι η αποθήκευση βρίσκεται σε εξέλιξη
-                            with st.spinner("💾 Αποθήκευση και υπολογισμός βαθμών στη βάση δεδομένων... Παρακαλώ περιμένετε."):
-                                conn = get_connection()
-                                cursor = conn.cursor()
-                                
-                                for _, row in edited_df.iterrows():
-                                    std_id = row["StudentID"]
-                                    for cat_id, col_title in cat_map.items():
-                                        val = row[col_title]
-                                        score_val = float(val) if pd.notna(val) and str(val).strip() != "" else None
-                                        
-                                        cursor.execute(
-                                            """
-                                            MERGE dbo.Grades AS target
-                                            USING (SELECT %s AS StudentID, %s AS CategoryID) AS source
-                                            ON (target.StudentID = source.StudentID AND target.CategoryID = source.CategoryID)
-                                            WHEN MATCHED THEN
-                                                UPDATE SET Score = %s, UpdatedAt = GETDATE()
-                                            WHEN NOT MATCHED THEN
-                                                INSERT (StudentID, CategoryID, Score) VALUES (source.StudentID, source.CategoryID, %s);
-                                            """,
-                                            (std_id, cat_id, score_val, score_val)
-                                        )
-                                conn.commit()
-                                cursor.close()
-                                conn.close()
-                                
-                                st.session_state.flash_msg = "💾 Οι βαθμοί αποθηκεύτηκαν επιτυχώς και ο Γενικός Βαθμός ενημερώθηκε!"
-                                st.rerun()
+                            # Καλούμε το Pop-up Modal
+                            process_save_modal(edited_df)
