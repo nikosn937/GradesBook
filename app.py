@@ -357,8 +357,8 @@ else:
                     df_std = pd.DataFrame(students, columns=["ID", "A.M.", "Ονοματεπώνυμο"])
                     st.dataframe(df_std, use_container_width=True)
 
-            # ------------------------------------------------------------------
-            # TAB 3: ΚΑΤΑΧΩΡΗΣΗ ΒΑΘΜΩΝ (0-20 & VALIDATION)
+        # ------------------------------------------------------------------
+            # TAB 3: ΚΑΤΑΧΩΡΗΣΗ ΒΑΘΜΩΝ (ΜΕ FORM ΓΙΑ ΑΠΟΦΥΓΗ FLICKER)
             # ------------------------------------------------------------------
             elif selected_tab == "📝 3. Καταχώρηση & Υπολογισμός Βαθμών":
                 st.subheader("Πίνακας Βαθμολογίας")
@@ -422,19 +422,24 @@ else:
                     
                     df_editor = pd.DataFrame(data)
                     
-                    st.caption("Επεξεργαστείτε τους βαθμούς απευθείας στον πίνακα και πατήστε **'Αποθήκευση Βαθμών'**.")
+                    st.caption("Συμπληρώστε ή τροποποιήστε τους βαθμούς στον πίνακα και πατήστε **'💾 Αποθήκευση Βαθμών'** στο τέλος.")
                     
-                    edited_df = st.data_editor(
-                        df_editor,
-                        disabled=["StudentID", "Α.Μ.", "Ονοματεπώνυμο", "Γενικός Βαθμός"],
-                        hide_index=True,
-                        use_container_width=True,
-                        key=f"grades_editor_{class_subject_id}"
-                    )
+                    # ΧΡΗΣΗ FORM ΓΙΑ ΑΠΟΛΥΤΗ ΣΤΑΘΕΡΟΤΗΤΑ ΚΑΙ ΜΗΔΕΝΙΚΟ FLICKER
+                    with st.form(key=f"grades_form_{class_subject_id}"):
+                        edited_df = st.data_editor(
+                            df_editor,
+                            disabled=["StudentID", "Α.Μ.", "Ονοματεπώνυμο", "Γενικός Βαθμός"],
+                            hide_index=True,
+                            use_container_width=True,
+                            key=f"editor_inside_form_{class_subject_id}"
+                        )
+                        
+                        submit_save = st.form_submit_button("💾 Αποθήκευση Βαθμών", type="primary")
                     
-                    if st.button("💾 Αποθήκευση Βαθμών", type="primary"):
+                    if submit_save:
                         invalid_entries = []
                         
+                        # 1. Έλεγχος Εγκυρότητας (0 - 20)
                         for _, row in edited_df.iterrows():
                             student_name = row["Ονοματεπώνυμο"]
                             for cat_id, col_title in cat_map.items():
@@ -447,9 +452,11 @@ else:
                                     except ValueError:
                                         invalid_entries.append(f"• **{student_name}**: Μη έγκυρη τιμή '{val}'")
                         
+                        # Αν υπάρχουν λάθος βαθμοί, ακυρώνουμε την εγγραφή
                         if invalid_entries:
                             st.error("❌ **Η ΑΠΟΘΗΚΕΥΣΗ ΑΚΥΡΩΘΗΚΕ!** Εντοπίστηκαν βαθμοί εκτός ορίων (0 - 20):\n\n" + "\n".join(invalid_entries))
                         else:
+                            # 2. Μία μαζική εγγραφή στη βάση μόνο στο τέλος
                             conn = get_connection()
                             cursor = conn.cursor()
                             
