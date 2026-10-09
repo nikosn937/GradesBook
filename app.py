@@ -357,8 +357,8 @@ else:
                     df_std = pd.DataFrame(students, columns=["ID", "A.M.", "Ονοματεπώνυμο"])
                     st.dataframe(df_std, use_container_width=True)
 
-     # ------------------------------------------------------------------
-            # TAB 3: ΚΑΤΑΧΩΡΗΣΗ ΒΑΘΜΩΝ (ΜΕ POPUP MODAL DIALOG)
+    # ------------------------------------------------------------------
+            # TAB 3: ΚΑΤΑΧΩΡΗΣΗ ΒΑΘΜΩΝ (ΜΕ ΠΛΗΡΕΣ ΥΨΟΣ ΧΩΡΙΣ SCROLLBAR)
             # ------------------------------------------------------------------
             elif selected_tab == "📝 3. Καταχώρηση & Υπολογισμός Βαθμών":
                 st.subheader("Πίνακας Βαθμολογίας")
@@ -424,12 +424,17 @@ else:
                     
                     st.caption("Συμπληρώστε ή τροποποιήστε τους βαθμούς στον πίνακα και πατήστε **'💾 Αποθήκευση Βαθμών'** στο τέλος.")
                     
+                    # Υπολογισμός δυναμικού ύψους για να χωράνε όλοι οι μαθητές
+                    num_rows = len(df_editor)
+                    calc_height = (num_rows + 1) * 35 + 40
+                    
                     with st.form(key=f"grades_form_{class_subject_id}"):
                         edited_df = st.data_editor(
                             df_editor,
                             disabled=["StudentID", "Α.Μ.", "Ονοματεπώνυμο", "Γενικός Βαθμός"],
                             hide_index=True,
                             use_container_width=True,
+                            height=calc_height,
                             key=f"editor_inside_form_{class_subject_id}"
                         )
                         
@@ -468,7 +473,6 @@ else:
                             st.session_state.flash_msg = "💾 Οι βαθμοί αποθηκεύτηκαν επιτυχώς!"
                             st.rerun()
 
-                    # Έλεγχος κατά το πατημα του κουμπιού
                     if submit_save:
                         invalid_entries = []
                         
@@ -487,5 +491,4 @@ else:
                         if invalid_entries:
                             st.error("❌ **Η ΑΠΟΘΗΚΕΥΣΗ ΑΚΥΡΩΘΗΚΕ!** Εντοπίστηκαν βαθμοί εκτός ορίων (0 - 20):\n\n" + "\n".join(invalid_entries))
                         else:
-                            # Καλούμε το Pop-up Modal
                             process_save_modal(edited_df)
