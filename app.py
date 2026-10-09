@@ -1,4 +1,216 @@
-# --------------------------------------------------------------------------
+import streamlit as st
+import pymssql
+import pandas as pd
+import bcrypt
+
+# ==============================================================================
+# 1. ΣΥΝΔΕΣΗ ΜΕ SQL SERVER (ARVIXE) ΜΕΣΩ PYMSSQL
+# ==============================================================================
+def get_connection():
+    """
+    Διαβάζει τα διαπιστευτήρια ΑΠΟΚΛΕΙΣΤΙΚΑ από το st.secrets
+    (.streamlit/secrets.toml ή Settings -> Secrets στο Streamlit Cloud)
+    """
+    server = st.secrets["DB_SERVER"]
+    port = int(st.secrets.get("DB_PORT", 1433))
+    database = st.secrets["DB_NAME"]
+    username = st.secrets["DB_USER"]
+    password = st.secrets["DB_PASSWORD"]
+    
+    return pymssql.connect(
+        server=server,
+        port=port,
+        user=username,
+        password=password,
+        database=database,
+        charset="UTF-8",
+        as_dict=False
+    )
+
+def run_query(query, params=(), fetchone=False, fetchall=False, commit=False):
+    """Utility function για ασφαλή εκτέλεση SQL ερωτημάτων."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(query, params)
+    
+    result = None
+    if fetchone:
+        result = cursor.fetchone()
+    elif fetchall:
+        result = cursor.fetchall()
+        if result is None:
+            result = []
+        
+    if commit:
+        conn.commit()
+        
+    cursor.close()
+    conn.close()
+    return result
+
+# ==============================================================================
+# 2. ΑΥΘΕΝΤΙΚΟΠΟΙΗΣΗ (AUTH)
+# ==============================================================================
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+def check_password(password: str, hashed: str) -> bool:
+    return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
+
+def login_user(email, password):
+    user = run_query(
+        "SELECT UserID, FullName, PasswordHash FROM dbo.Users WHERE Email = %s",
+        (email,), fetchone=True
+    )
+    if user and check_password(password, user[2]):
+        return {"id": user[0], "name": user[1], "email": email}
+    return None
+
+def register_user(fullname, email, password):
+    existing = run_query("SELECT UserID FROM dbo.Users WHERE Email = %s", (email,), fetchone=True)
+    if existing:
+        return False, "Το email χρησιμοποιείται ήδη."
+    
+    pwd_hash = hash_password(password)
+    run_query(
+        "INSERT INTO dbo.Users (FullName, Email, PasswordHash, IsVerified) VALUES (%s, %s, %s, 1)",
+        (fullname, email, pwd_hash), commit=True
+    )
+    return True, "Η εγγραφή ολοκληρώθηκε επιτυχώς!"
+
+# ==============================================================================
+# 3. INTERFACE / UI APP
+# ==============================================================================
+st.set_page_config(page_title="Online Βαθμολόγιο", page_icon="📝", layout="wide")
+
+if "user" not in st.session_state:
+    st.session_state.user = None
+
+# Διαχείριση μηνυμάτων ειδοποίησης μετά από rerun
+if "flash_msg" in st.session_state:
+    st.success(st.session_state.flash_msg)
+    del st.session_state["flash_msg"]
+
+# ------------------------------------------------------------------------------
+# ΣΕΛΙΔΕΣ ΣΥΝΔΕΣΗΣ / ΕΓΓΡΑΦΗΣ
+# ------------------------------------------------------------------------------
+if st.session_state.user is None:
+    st.title("📝 Δυναμικό Online Βαθμολόγιο")
+    tab_login, tab_reg = st.tabs(["Σύνδεση", "Εγγραφή Εκπαιδευτικού"])
+    
+    with tab_login:
+        st.subheader("Σύνδεση στο λογαριασμό σας")
+        email = st.text_input("Email", key="log_email")
+        password = st.text_input("Κωδικός Πρόσβασης", type="password", key="log_pass")
+        if st.button("Σύνδεση", type="primary"):
+            user = login_user(email, password)
+            if user:
+                st.session_state.user = user
+                st.success(f"Καλώς ήρθατε, {user['name']}!")
+                st.rerun()
+            else:
+                st.error("Λανθασμένο email ή κωδικός πρόσβασης.")
+                
+    with tab_reg:
+        st.subheader("Δημιουργία Νέου Λογαριασμού")
+        fullname = st.text_input("Ονοματεπώνυμο", key="reg_name")
+        reg_email = st.text_input("Email", key="reg_email")
+        reg_pass = st.text_input("Κωδικός Πρόσβασης", type="password", key="reg_pass")
+        if st.button("Εγγραφή"):
+            if fullname and reg_email and reg_pass:
+                ok, msg = register_user(fullname, reg_email, reg_pass)
+                if ok:
+                    st.success(msg)
+                else:
+                    st.error(msg)
+            else:
+                st.warning("Παρακαλώ συμπληρώστε όλα τα πεδία.")
+
+# ------------------------------------------------------------------------------
+# ΚΥΡΙΩΣ ΕΦΑΡΜΟΓΗ (ΜΕΤΑ ΤΗ ΣΥΝΔΕΣΗ)
+# ------------------------------------------------------------------------------
+else:
+    user_id = st.session_state.user["id"]
+    
+    # Sidebar
+    st.sidebar.title(f"👨‍🏫 {st.session_state.user['name']}")
+    if st.sidebar.button("Αποσύνδεση"):
+        st.session_state.user = None
+        st.rerun()
+
+    menu = st.sidebar.radio("Πλοήγηση", ["Διαχείριση Σχολείων & Μαθημάτων", "Τα Βαθμολόγιά μου"])
+
+    # --------------------------------------------------------------------------
+    # MENU 1: ΔΙΑΧΕΙΡΙΣΗ ΣΧΟΛΕΙΩΝ & ΜΑΘΗΜΑΤΩΝ
+    # --------------------------------------------------------------------------
+    if menu == "Διαχείριση Σχολείων & Μαθημάτων":
+        st.title("🏛️ Ρυθμίσεις Σχολείων & Μαθημάτων")
+        
+        col1, col2 = st.columns(2)
+        
+        # 1. Σχολεία
+        with col1:
+            st.subheader("Τα Σχολεία μου")
+            new_school = st.text_input("Προσθήκη Νέου Σχολείου", placeholder="π.χ. Γυμνάσιο Ακρόπολης")
+            if st.button("Προσθήκη Σχολείου"):
+                if new_school.strip():
+                    run_query("INSERT INTO dbo.Schools (UserID, SchoolName) VALUES (%s, %s)", (user_id, new_school.strip()), commit=True)
+                    st.session_state.flash_msg = "Το σχολείο προστέθηκε επιτυχώς!"
+                    st.rerun()
+            
+            schools = run_query("SELECT SchoolID, SchoolName FROM dbo.Schools WHERE UserID = %s", (user_id,), fetchall=True)
+            if schools:
+                df_schools = pd.DataFrame(schools, columns=["ID", "Όνομα Σχολείου"])
+                st.dataframe(df_schools, use_container_width=True)
+
+        # 2. Μαθήματα
+        with col2:
+            st.subheader("Τα Μαθήματά μου")
+            new_subject = st.text_input("Προσθήκη Νέου Μαθήματος", placeholder="π.χ. Ιστορία")
+            if st.button("Προσθήκη Μαθήματος"):
+                if new_subject.strip():
+                    run_query("INSERT INTO dbo.Subjects (UserID, SubjectName) VALUES (%s, %s)", (user_id, new_subject.strip()), commit=True)
+                    st.session_state.flash_msg = "Το μάθημα προστέθηκε επιτυχώς!"
+                    st.rerun()
+            
+            subjects = run_query("SELECT SubjectID, SubjectName FROM dbo.Subjects WHERE UserID = %s", (user_id,), fetchall=True)
+            if subjects:
+                df_subjects = pd.DataFrame(subjects, columns=["ID", "Όνομα Μαθήματος"])
+                st.dataframe(df_subjects, use_container_width=True)
+
+        st.divider()
+        st.subheader("➕ Δημιουργία Νέου Βαθμολογίου / Τμήματος")
+        
+        if schools and subjects:
+            school_dict = {str(s[1]): int(s[0]) for s in schools}
+            subject_dict = {str(sub[1]): int(sub[0]) for sub in subjects}
+            
+            with st.form("create_class_form"):
+                col_a, col_b, col_c = st.columns(3)
+                sel_school = col_a.selectbox("Σχολείο", list(school_dict.keys()))
+                sel_subject = col_b.selectbox("Μάθημα", list(subject_dict.keys()))
+                class_name = col_c.text_input("Τμήμα", placeholder="π.χ. Γ1")
+                
+                col_d, col_e = st.columns(2)
+                academic_year = col_d.text_input("Σχολικό Έτος", value="2026-2027")
+                term = col_e.selectbox("Περίοδος / Τετράμηνο", ["Α' Τετράμηνο", "Β' Τετράμηνο", "Ετήσιο"])
+                
+                if st.form_submit_button("Δημιουργία Βαθμολογίου"):
+                    if class_name.strip():
+                        run_query(
+                            """INSERT INTO dbo.ClassSubjects (UserID, SchoolID, SubjectID, ClassName, AcademicYear, Term)
+                               VALUES (%s, %s, %s, %s, %s, %s)""",
+                            (user_id, school_dict[sel_school], subject_dict[sel_subject], class_name.strip(), academic_year, term),
+                            commit=True
+                        )
+                        st.session_state.flash_msg = f"✅ Δημιουργήθηκε επιτυχώς το βαθμολόγιο για το τμήμα {class_name} ({sel_subject})!"
+                        st.rerun()
+                    else:
+                        st.error("Παρακαλώ συμπληρώστε το όνομα του τμήματος.")
+        else:
+            st.info("Προσθέστε τουλάχιστον ένα Σχολείο και ένα Μάθημα παραπάνω για να δημιουργήσετε βαθμολόγιο.")
+
+    # --------------------------------------------------------------------------
     # MENU 2: ΔΙΑΧΕΙΡΙΣΗ ΒΑΘΜΟΛΟΓΙΩΝ, ΚΑΤΗΓΟΡΙΩΝ & ΜΑΘΗΤΩΝ
     # --------------------------------------------------------------------------
     elif menu == "Τα Βαθμολόγιά μου":
@@ -28,10 +240,12 @@
             if "active_tab" not in st.session_state:
                 st.session_state.active_tab = "⚙️ 1. Κατηγορίες & Βαρύτητες (%)"
                 
+            tab_list = ["⚙️ 1. Κατηγορίες & Βαρύτητες (%)", "👥 2. Εισαγωγή Μαθητών (Excel)", "📝 3. Καταχώρηση & Υπολογισμός Βαθμών"]
+            
             selected_tab = st.radio(
                 "Επιλέξτε Ενότητα:",
-                ["⚙️ 1. Κατηγορίες & Βαρύτητες (%)", "👥 2. Εισαγωγή Μαθητών (Excel)", "📝 3. Καταχώρηση & Υπολογισμός Βαθμών"],
-                index=["⚙️ 1. Κατηγορίες & Βαρύτητες (%)", "👥 2. Εισαγωγή Μαθητών (Excel)", "📝 3. Καταχώρηση & Υπολογισμός Βαθμών"].index(st.session_state.active_tab),
+                tab_list,
+                index=tab_list.index(st.session_state.active_tab) if st.session_state.active_tab in tab_list else 0,
                 horizontal=True,
                 key="tab_selector"
             )
@@ -215,7 +429,7 @@
                         disabled=["StudentID", "Α.Μ.", "Ονοματεπώνυμο", "Γενικός Βαθμός"],
                         hide_index=True,
                         use_container_width=True,
-                        key=f"grades_editor_{class_subject_id}"  # Σταθερό key για αποφυγή flicker
+                        key=f"grades_editor_{class_subject_id}"
                     )
                     
                     if st.button("💾 Αποθήκευση Βαθμών", type="primary"):
