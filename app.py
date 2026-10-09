@@ -9,7 +9,7 @@ import bcrypt
 def get_connection():
     """
     Διαβάζει τα διαπιστευτήρια ΑΠΟΚΛΕΙΣΤΙΚΑ από το st.secrets
-    (αρχείο .streamlit/secrets.toml ή Settings -> Secrets στο Streamlit Cloud)
+    (.streamlit/secrets.toml ή Settings -> Secrets στο Streamlit Cloud)
     """
     server = st.secrets["DB_SERVER"]
     port = int(st.secrets.get("DB_PORT", 1433))
@@ -26,6 +26,7 @@ def get_connection():
         charset="UTF-8",
         as_dict=False
     )
+
 def run_query(query, params=(), fetchone=False, fetchall=False, commit=False):
     """Utility function για ασφαλή εκτέλεση SQL ερωτημάτων."""
     conn = get_connection()
@@ -37,6 +38,8 @@ def run_query(query, params=(), fetchone=False, fetchall=False, commit=False):
         result = cursor.fetchone()
     elif fetchall:
         result = cursor.fetchall()
+        if result is None:
+            result = []
         
     if commit:
         conn.commit()
@@ -174,8 +177,9 @@ else:
         st.subheader("➕ Δημιουργία Νέου Βαθμολογίου / Τμήματος")
         
         if schools and subjects:
-            school_dict = {s[1]: s[0] for s in schools}
-            subject_dict = {sub[1]: sub[0] for sub in subjects}
+            # Ασφαλής μετατροπή σε dictionary
+            school_dict = {str(s[1]): int(s[0]) for s in schools}
+            subject_dict = {str(sub[1]): int(sub[0]) for sub in subjects}
             
             with st.form("create_class_form"):
                 col_a, col_b, col_c = st.columns(3)
@@ -393,7 +397,6 @@ else:
                                 val = row[col_title]
                                 score_val = float(val) if pd.notna(val) and str(val).strip() != "" else None
                                 
-                                # UPSERT με MERGE στον SQL Server (%s placeholders για pymssql)
                                 cursor.execute(
                                     """
                                     MERGE dbo.Grades AS target
