@@ -9,6 +9,43 @@ import secrets
 import datetime
 
 # ==============================================================================
+# 0. ΑΥΤΟΜΑΤΟΣ ΕΛΕΓΧΟΣ LINK ΕΠΑΛΗΘΕΥΣΗΣ EMAIL ΑΠΟ URL
+# ==============================================================================
+st.set_page_config(page_title="Online Βαθμολόγιο", page_icon="📝", layout="wide")
+
+query_params = st.query_params
+if "verify_token" in query_params:
+    token_to_verify = query_params["verify_token"]
+    st.query_params.clear()
+    
+    # Σύνδεση για την επαλήθευση
+    try:
+        server = st.secrets["DB_SERVER"]
+        port = int(st.secrets.get("DB_PORT", 1433))
+        database = st.secrets["DB_NAME"]
+        username = st.secrets["DB_USER"]
+        password = st.secrets["DB_PASSWORD"]
+        
+        conn = pymssql.connect(server=server, port=port, user=username, password=password, database=database, charset="UTF-8")
+        cursor = conn.cursor()
+        cursor.execute("SELECT UserID, IsVerified FROM dbo.Users WHERE VerificationToken = %s", (token_to_verify,))
+        user_to_verify = cursor.fetchone()
+        
+        if user_to_verify:
+            if user_to_verify[1] == 1:
+                st.success("ℹ️ Ο λογαριασμός σας είναι ήδη επαληθευμένος! Μπορείτε να συνδεθείτε.")
+            else:
+                cursor.execute("UPDATE dbo.Users SET IsVerified = 1, VerificationToken = NULL WHERE UserID = %s", (user_to_verify[0],))
+                conn.commit()
+                st.success("🎉 Ο λογαριασμός σας επαληθεύτηκε και ενεργοποιήθηκε επιτυχώς! Μπορείτε πλέον να συνδεθείτε.")
+        else:
+            st.error("❌ Μη έγκυρος ή ληγμένος σύνδεσμος επαλήθευσης.")
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        st.error(f"Σφάλμα κατά την επαλήθευση: {e}")
+
+# ==============================================================================
 # 1. ΣΥΝΔΕΣΗ ΜΕ SQL SERVER (ARVIXE) ΜΕΣΩ PYMSSQL
 # ==============================================================================
 def get_connection():
@@ -90,7 +127,7 @@ def login_user(email, password):
     )
     if user:
         if not user[3]:  # IsVerified == 0
-            return None, "⚠️ Το email σας δεν έχει επαληθευτεί. Επιλέξτε 'Επαλήθευση Email' για να ενεργοποιήσετε τον λογαριασμό σας."
+            return None, "⚠️ Το email σας δεν έχει επαληθευτεί. Ελέγξτε τα εισερχόμενά σας και κάντε κλικ στον σύνδεσμο ενεργοποίησης."
         if check_password(password, user[2]):
             return {"id": user[0], "name": user[1], "email": email}, "Καλώς ήρθατε!"
         return None, "Λανθασμένος κωδικός πρόσβασης."
@@ -113,18 +150,27 @@ def register_user(fullname, email, password):
         (fullname, email, pwd_hash, v_token), commit=True
     )
     
-    email_body = f"Γεια σας {fullname},\n\nΣας ευχαριστούμε για την εγγραφή σας στο Online Βαθμολόγιο.\nΟ κωδικός επαλήθευσης (Verification Token) του λογαριασμού σας είναι: {v_token}\n\nΕισάγετε αυτόν τον κωδικό στην οθόνη επαλήθευσης για να ενεργοποιήσετε τον λογαριασμό σας."
+    # Δημιουργία ενεργού link με βάση το deployment URL σου
+    verify_url = f"https://gradesbook.streamlit.app/?verify_token={v_token}"
+    
+    email_body = f"""Γεια σας {fullname},
+
+Σας ευχαριστούμε για την εγγραφή σας στο Online Βαθμολόγιο.
+Παρακαλώ κάντε κλικ στον παρακάτω σύνδεσμο για να ενεργοποιήσετε άμεσα τον λογαριασμό σας:
+
+{verify_url}
+
+Αν δεν ζητήσατε εσείς αυτή την εγγραφή, αγνοήστε αυτό το μήνυμα.
+"""
     
     if send_email(email, "Επαλήθευση Email - Online Βαθμολόγιο", email_body):
-        return True, "🎉 Η εγγραφή σας ολοκληρώθηκε! Σας στάλθηκε email με τον κωδικό επαλήθευσης."
+        return True, "🎉 Η εγγραφή σας ολοκληρώθηκε! Σας στάλθηκε email με σύνδεσμο ενεργοποίησης."
     else:
-        return True, f"⚠️ Η εγγραφή έγινε, αλλά η αποστολή email απέτυχε. Ο κωδικός επαλήθευσης (token) είναι: {v_token}"
+        return True, f"⚠️ Η εγγραφή έγινε, αλλά η αποστολή email απέτυχε. Link ενεργοποίησης: {verify_url}"
 
 # ==============================================================================
 # 4. INTERFACE / UI APP
 # ==============================================================================
-st.set_page_config(page_title="Online Βαθμολόγιο", page_icon="📝", layout="wide")
-
 if "user" not in st.session_state:
     st.session_state.user = None
 
@@ -136,7 +182,7 @@ if "flash_msg" in st.session_state:
     del st.session_state["flash_msg"]
 
 # ------------------------------------------------------------------------------
-# ΣΕΛΙΔΕΣ ΣΥΝΔΕΣΗΣ / ΕΓΓΡΑΦΗΣ / ΕΠΑΛΗΘΕΥΣΗΣ / ΕΠΑΝΑΦΟΡΑΣ ΚΩΔΙΚΟΥ
+# ΣΕΛΙΔΕΣ ΣΥΝΔΕΣΗΣ / ΕΓΓΡΑΦΗΣ / ΕΠΑΝΑΦΟΡΑΣ ΚΩΔΙΚΟΥ
 # ------------------------------------------------------------------------------
 if st.session_state.user is None:
     st.title("📝 Δυναμικό Online Βαθμολόγιο")
@@ -144,7 +190,7 @@ if st.session_state.user is None:
     # Οριζόντια επιλογή λειτουργίας (tabs style)
     auth_choice = st.radio(
         "Επιλογή:",
-        ["🔑 Σύνδεση", "👤 Εγγραφή", "✉️ Επαλήθευση Email", "🔄 Ξεχάσατε τον κωδικό;"],
+        ["🔑 Σύνδεση", "👤 Εγγραφή", "🔄 Ξεχάσατε τον κωδικό;"],
         horizontal=True,
         label_visibility="collapsed"
     )
@@ -153,8 +199,6 @@ if st.session_state.user is None:
         st.session_state.auth_mode = "login"
     elif "Εγγραφή" in auth_choice:
         st.session_state.auth_mode = "register"
-    elif "Επαλήθευση" in auth_choice:
-        st.session_state.auth_mode = "verify"
     else:
         st.session_state.auth_mode = "forgot"
         
@@ -196,28 +240,7 @@ if st.session_state.user is None:
                 else:
                     st.warning("Παρακαλώ συμπληρώστε όλα τα πεδία.")
 
-    # 3. ΕΠΑΛΗΘΕΥΣΗ EMAIL
-    elif st.session_state.auth_mode == "verify":
-        st.subheader("Επαλήθευση Λογαριασμού Email")
-        st.caption("Εισάγετε το email σας και τον κωδικό επαλήθευσης (token) που λάβατε.")
-        
-        with st.form("verify_form"):
-            v_email = st.text_input("Email")
-            v_token = st.text_input("Κωδικός Επαλήθευσης (Token)")
-            sub_verify = st.form_submit_button("Ενεργοποίηση Λογαριασμού", type="primary")
-            
-            if sub_verify:
-                user = run_query("SELECT UserID, IsVerified FROM dbo.Users WHERE Email = %s AND VerificationToken = %s", (v_email.strip(), v_token.strip()), fetchone=True)
-                if user:
-                    if user[1] == 1:
-                        st.info("Ο λογαριασμός σας είναι ήδη επαληθευμένος. Μπορείτε να συνδεθείτε.")
-                    else:
-                        run_query("UPDATE dbo.Users SET IsVerified = 1, VerificationToken = NULL WHERE UserID = %s", (user[0],), commit=True)
-                        st.success("🎉 Ο λογαριασμός σας ενεργοποιήθηκε επιτυχώς! Μπορείτε πλέον να συνδεθείτε.")
-                else:
-                    st.error("Λανθασμένο email ή κωδικός επαλήθευσης.")
-
-    # 4. ΞΕΧΑΣΑ ΤΟΝ ΚΩΔΙΚΟ (FORGOT PASSWORD)
+    # 3. ΞΕΧΑΣΑ ΤΟΝ ΚΩΔΙΚΟ (FORGOT PASSWORD)
     elif st.session_state.auth_mode == "forgot":
         st.subheader("Επαναφορά Κωδικού Πρόσβασης")
         st.caption("Εισάγετε το email σας για να σας αποστείλουμε οδηγίες επαναφοράς.")
