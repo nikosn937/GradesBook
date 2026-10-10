@@ -252,28 +252,34 @@ else:
             st.session_state.active_tab = selected_tab
             st.divider()
 
-            # ------------------------------------------------------------------
-            # TAB 1: ΚΑΤΗΓΟΡΙΕΣ ΒΑΘΜΟΛΟΓΗΣΗΣ & ΒΑΡΥΤΗΤΕΣ
+          # ------------------------------------------------------------------
+            # TAB 1: ΚΑΤΗΓΟΡΙΕΣ ΒΑΘΜΟΛΟΓΗΣΗΣ & ΒΑΡΥΤΗΤΕΣ (ΜΕ ΕΝΙΑΙΟ ΚΟΥΜΠΙ)
             # ------------------------------------------------------------------
             if selected_tab == "⚙️ 1. Κατηγορίες & Βαρύτητες (%)":
                 st.subheader("Ορισμός Κατηγοριών Βαθμολόγησης")
                 st.caption("Ορίστε τις κατηγορίες (π.χ. Διαγώνισμα, Συμμετοχή) και τα ποσοστά βαρύτητας. Το άθροισμα πρέπει να είναι 100%.")
                 
-                col_cat1, col_cat2 = st.columns([2, 1])
-                cat_name = col_cat1.text_input("Όνομα Κατηγορίας", placeholder="π.χ. Διαγώνισμα A' Τετραμήνου")
-                weight = col_cat2.number_input("Βαρύτητα (%)", min_value=1.0, max_value=100.0, value=20.0, step=1.0)
-                
-                if st.button("Προσθήκη Κατηγορίας"):
-                    if cat_name.strip():
-                        run_query(
-                            "INSERT INTO dbo.GradingCategories (ClassSubjectID, CategoryName, WeightPercentage) VALUES (%s, %s, %s)",
-                            (class_subject_id, cat_name.strip(), weight), commit=True
-                        )
-                        st.session_state.flash_msg = "Η κατηγορία προστέθηκε επιτυχώς!"
-                        st.rerun()
+                # Φόρμα Προσθήκης Νέας Κατηγορίας (Ξεχωριστή φόρμα)
+                with st.form(key="add_category_form"):
+                    col_cat1, col_cat2 = st.columns([2, 1])
+                    cat_name = col_cat1.text_input("Όνομα Νέας Κατηγορίας", placeholder="π.χ. Διαγώνισμα A' Τετραμήνου")
+                    weight = col_cat2.number_input("Βαρύτητα (%)", min_value=1.0, max_value=100.0, value=20.0, step=1.0)
+                    
+                    submit_add = st.form_submit_button("➕ Προσθήκη Κατηγορίας", type="primary")
+                    
+                    if submit_add:
+                        if cat_name.strip():
+                            run_query(
+                                "INSERT INTO dbo.GradingCategories (ClassSubjectID, CategoryName, WeightPercentage) VALUES (%s, %s, %s)",
+                                (class_subject_id, cat_name.strip(), weight), commit=True
+                            )
+                            st.session_state.flash_msg = "Η κατηγορία προστέθηκε επιτυχώς!"
+                            st.rerun()
+                        else:
+                            st.error("Παρακαλώ συμπληρώστε όνομα κατηγορίας.")
 
                 st.divider()
-                st.write("### Υπάρχουσες Κατηγορίες")
+                st.subheader("📋 Διαχείριση Υπαρχουσών Κατηγοριών")
                 
                 categories = run_query(
                     "SELECT CategoryID, CategoryName, WeightPercentage FROM dbo.GradingCategories WHERE ClassSubjectID = %s",
@@ -281,35 +287,69 @@ else:
                 )
                 
                 if categories:
-                    total_weight = sum([float(c[2]) for c in categories])
-                    
-                    for cat in categories:
-                        cat_id, name_val, weight_val = cat[0], cat[1], float(cat[2])
+                    # Ενιαία φόρμα για μαζική αποθήκευση αλλαγών ή διαγραφή
+                    with st.form(key="edit_categories_form"):
+                        updated_categories = []
+                        deleted_category_ids = []
                         
-                        col_name, col_w, col_btn_edit, col_btn_del = st.columns([3, 2, 1, 1])
-                        
-                        new_name = col_name.text_input("Όνομα", value=name_val, key=f"cat_name_{cat_id}")
-                        new_weight = col_w.number_input("Βαρύτητα (%)", min_value=1.0, max_value=100.0, value=weight_val, step=1.0, key=f"cat_w_{cat_id}")
-                        
-                        if col_btn_edit.button("💾 Αποθήκευση", key=f"save_cat_{cat_id}"):
-                            run_query(
-                                "UPDATE dbo.GradingCategories SET CategoryName = %s, WeightPercentage = %s WHERE CategoryID = %s",
-                                (new_name.strip(), new_weight, cat_id), commit=True
-                            )
-                            st.session_state.flash_msg = "Η κατηγορία ενημερώθηκε!"
-                            st.rerun()
+                        for cat in categories:
+                            cat_id, name_val, weight_val = cat[0], cat[1], float(cat[2])
                             
-                        if col_btn_del.button("🗑️ Διαγραφή", key=f"del_cat_{cat_id}"):
-                            run_query("DELETE FROM dbo.GradingCategories WHERE CategoryID = %s", (cat_id,), commit=True)
-                            st.session_state.flash_msg = "Η κατηγορία διαγράφηκε!"
-                            st.rerun()
+                            col_name, col_w, col_del = st.columns([3, 2, 1])
+                            
+                            new_name = col_name.text_input("Όνομα", value=name_val, key=f"cat_name_{cat_id}")
+                            new_weight = col_w.number_input("Βαρύτητα (%)", min_value=1.0, max_value=100.0, value=weight_val, step=1.0, key=f"cat_w_{cat_id}")
+                            is_deleted = col_del.checkbox("Διαγραφή", key=f"del_chk_{cat_id}")
+                            
+                            updated_categories.append((cat_id, new_name, new_weight))
+                            if is_deleted:
+                                deleted_category_ids.append(cat_id)
+                        
+                        st.markdown("")
+                        submit_bulk_save = st.form_submit_button("💾 Αποθήκευση Όλων των Αλλαγών", type="primary")
+                    
+                    # Επεξεργασία υποβολής της φόρμας
+                    if submit_bulk_save:
+                        conn = get_connection()
+                        cursor = conn.cursor()
+                        try:
+                            # 1. Διαγραφή κατηγοριών (και των βαθμών τους πρώτα για αποφυγή IntegrityError)
+                            for cat_id in deleted_category_ids:
+                                cursor.execute("DELETE FROM dbo.Grades WHERE CategoryID = %s", (cat_id,))
+                                cursor.execute("DELETE FROM dbo.GradingCategories WHERE CategoryID = %s", (cat_id,))
+                            
+                            # 2. Ενημέρωση υπολοίπων κατηγοριών
+                            for cat_id, new_name, new_weight in updated_categories:
+                                if cat_id not in deleted_category_ids:
+                                    cursor.execute(
+                                        "UPDATE dbo.GradingCategories SET CategoryName = %s, WeightPercentage = %s WHERE CategoryID = %s",
+                                        (new_name.strip(), new_weight, cat_id)
+                                    )
+                                    
+                            conn.commit()
+                            st.session_state.flash_msg = "💾 Οι αλλαγές στις κατηγορίες αποθηκεύτηκαν επιτυχώς!"
+                        except Exception as e:
+                            conn.rollback()
+                            st.error(f"Σφάλμα κατά την αποθήκευση: {e}")
+                        finally:
+                            cursor.close()
+                            conn.close()
+                        st.rerun()
 
+                    # Υπολογισμός συνολικής βαρύτητας για εμφάνιση
+                    current_categories = run_query(
+                        "SELECT WeightPercentage FROM dbo.GradingCategories WHERE ClassSubjectID = %s",
+                        (class_subject_id,), fetchall=True
+                    )
+                    total_weight = sum([float(c[0]) for c in current_categories]) if current_categories else 0.0
+                    
                     st.markdown("---")
                     if total_weight == 100.0:
                         st.success(f"✅ Συνολική Βαρύτητα: **{total_weight:.1f}%** (Έτοιμο για υπολογισμούς)")
                     else:
                         st.error(f"⚠️ Συνολική Βαρύτητα: **{total_weight:.1f}%**. Πρέπει το άθροισμα να ισούται ακριβώς με **100%**!")
-
+                else:
+                    st.info("Δεν έχουν οριστεί κατηγορίες βαθμολόγησης ακόμα.")
             # ------------------------------------------------------------------
             # TAB 2: ΕΙΣΑΓΩΓΗ ΜΑΘΗΤΩΝ ΑΠΟ EXCEL
             # ------------------------------------------------------------------
