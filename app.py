@@ -129,19 +129,25 @@ if "flash_msg" in st.session_state:
 if st.session_state.user is None:
     st.title("📝 Δυναμικό Online Βαθμολόγιο")
     
-    col_nav1, col_nav2, col_nav3 = st.columns(3)
-    if col_nav1.button("🔑 Σύνδεση", use_container_width=True):
+    # Οριζόντια επιλογή λειτουργίας (μοιάζει με tabs)
+    auth_choice = st.radio(
+        "Επιλογή:",
+        ["🔑 Σύνδεση", "👤 Εγγραφή Εκπαιδευτικού", "🔄 Ξεχάσατε τον κωδικό;"],
+        horizontal=True,
+        label_visibility="collapsed"
+    )
+    
+    # Συγχρονισμός με το session_state
+    if "Σύνδεση" in auth_choice:
         st.session_state.auth_mode = "login"
-        st.rerun()
-    if col_nav2.button("👤 Εγγραφή Εκπαιδευτικού", use_container_width=True):
+    elif "Εγγραφή" in auth_choice:
         st.session_state.auth_mode = "register"
-        st.rerun()
-    if col_nav3.button("🔄 Ξεχάσατε τον κωδικό;", use_container_width=True):
+    else:
         st.session_state.auth_mode = "forgot"
-        st.rerun()
         
     st.divider()
 
+    # 1. ΣΥΝΔΕΣΗ
     if st.session_state.auth_mode == "login":
         st.subheader("Σύνδεση στο λογαριασμό σας")
         with st.form("login_form"):
@@ -158,6 +164,7 @@ if st.session_state.user is None:
                 else:
                     st.error(msg)
 
+    # 2. ΕΓΓΡΑΦΗ
     elif st.session_state.auth_mode == "register":
         st.subheader("Δημιουργία Νέου Λογαριασμού")
         with st.form("register_form"):
@@ -172,11 +179,13 @@ if st.session_state.user is None:
                     if ok:
                         st.success(msg)
                         st.session_state.auth_mode = "login"
+                        st.rerun()
                     else:
                         st.error(msg)
                 else:
                     st.warning("Παρακαλώ συμπληρώστε όλα τα πεδία.")
 
+    # 3. ΞΕΧΑΣΑ ΤΟΝ ΚΩΔΙΚΟ (FORGOT PASSWORD)
     elif st.session_state.auth_mode == "forgot":
         st.subheader("Επαναφορά Κωδικού Πρόσβασης")
         st.caption("Εισάγετε το email σας για να σας αποστείλουμε οδηγίες επαναφοράς.")
@@ -242,7 +251,6 @@ if st.session_state.user is None:
                                 st.error("Ο κωδικός επαναφοράς έχει λήξει. Ζητήστε νέο.")
                         else:
                             st.error("Λανθασμένος κωδικός επαναφοράς.")
-
 # ------------------------------------------------------------------------------
 # ΚΥΡΙΩΣ ΕΦΑΡΜΟΓΗ (ΜΕΤΑ ΤΗ ΣΥΝΔΕΣΗ)
 # ------------------------------------------------------------------------------
