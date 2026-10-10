@@ -141,7 +141,7 @@ else:
     menu = st.sidebar.radio("Πλοήγηση", ["Διαχείριση Σχολείων & Μαθημάτων", "Τα Βαθμολόγιά μου"])
 
     # --------------------------------------------------------------------------
-    # MENU 1: ΔΙΑΧΕΙΡΙΣΗ ΣΧΟΛΕΙΩΝ & ΜΑΘΗΜΑΤΩΝ
+    # MENU 1: ΔΙΑΧΕΙΡΙΣΗ ΣΧΟΛΕΙΩΝ & ΜΑΘΗΜΑΤΩΝ (ΧΩΡΙΣ ID)
     # --------------------------------------------------------------------------
     if menu == "Διαχείριση Σχολείων & Μαθημάτων":
         st.title("🏛️ Ρυθμίσεις Σχολείων & Μαθημάτων")
@@ -160,8 +160,8 @@ else:
             
             schools = run_query("SELECT SchoolID, SchoolName FROM dbo.Schools WHERE UserID = %s", (user_id,), fetchall=True)
             if schools:
-                df_schools = pd.DataFrame(schools, columns=["ID", "Όνομα Σχολείου"])
-                st.dataframe(df_schools, use_container_width=True)
+                df_schools = pd.DataFrame(schools, columns=["ID", "Όνομα Σχολείου"])[["Όνομα Σχολείου"]]
+                st.dataframe(df_schools, use_container_width=True, hide_index=True)
 
         # 2. Μαθήματα
         with col2:
@@ -175,8 +175,8 @@ else:
             
             subjects = run_query("SELECT SubjectID, SubjectName FROM dbo.Subjects WHERE UserID = %s", (user_id,), fetchall=True)
             if subjects:
-                df_subjects = pd.DataFrame(subjects, columns=["ID", "Όνομα Μαθήματος"])
-                st.dataframe(df_subjects, use_container_width=True)
+                df_subjects = pd.DataFrame(subjects, columns=["ID", "Όνομα Μαθήματος"])[["Όνομα Μαθήματος"]]
+                st.dataframe(df_subjects, use_container_width=True, hide_index=True)
 
         st.divider()
         st.subheader("➕ Δημιουργία Νέου Βαθμολογίου / Τμήματος")
@@ -252,14 +252,13 @@ else:
             st.session_state.active_tab = selected_tab
             st.divider()
 
-          # ------------------------------------------------------------------
+            # ------------------------------------------------------------------
             # TAB 1: ΚΑΤΗΓΟΡΙΕΣ ΒΑΘΜΟΛΟΓΗΣΗΣ & ΒΑΡΥΤΗΤΕΣ (ΜΕ ΕΝΙΑΙΟ ΚΟΥΜΠΙ)
             # ------------------------------------------------------------------
             if selected_tab == "⚙️ 1. Κατηγορίες & Βαρύτητες (%)":
                 st.subheader("Ορισμός Κατηγοριών Βαθμολόγησης")
                 st.caption("Ορίστε τις κατηγορίες (π.χ. Διαγώνισμα, Συμμετοχή) και τα ποσοστά βαρύτητας. Το άθροισμα πρέπει να είναι 100%.")
                 
-                # Φόρμα Προσθήκης Νέας Κατηγορίας (Ξεχωριστή φόρμα)
                 with st.form(key="add_category_form"):
                     col_cat1, col_cat2 = st.columns([2, 1])
                     cat_name = col_cat1.text_input("Όνομα Νέας Κατηγορίας", placeholder="π.χ. Διαγώνισμα A' Τετραμήνου")
@@ -287,7 +286,6 @@ else:
                 )
                 
                 if categories:
-                    # Ενιαία φόρμα για μαζική αποθήκευση αλλαγών ή διαγραφή
                     with st.form(key="edit_categories_form"):
                         updated_categories = []
                         deleted_category_ids = []
@@ -308,17 +306,14 @@ else:
                         st.markdown("")
                         submit_bulk_save = st.form_submit_button("💾 Αποθήκευση Όλων των Αλλαγών", type="primary")
                     
-                    # Επεξεργασία υποβολής της φόρμας
                     if submit_bulk_save:
                         conn = get_connection()
                         cursor = conn.cursor()
                         try:
-                            # 1. Διαγραφή κατηγοριών (και των βαθμών τους πρώτα για αποφυγή IntegrityError)
                             for cat_id in deleted_category_ids:
                                 cursor.execute("DELETE FROM dbo.Grades WHERE CategoryID = %s", (cat_id,))
                                 cursor.execute("DELETE FROM dbo.GradingCategories WHERE CategoryID = %s", (cat_id,))
                             
-                            # 2. Ενημέρωση υπολοίπων κατηγοριών
                             for cat_id, new_name, new_weight in updated_categories:
                                 if cat_id not in deleted_category_ids:
                                     cursor.execute(
@@ -336,7 +331,6 @@ else:
                             conn.close()
                         st.rerun()
 
-                    # Υπολογισμός συνολικής βαρύτητας για εμφάνιση
                     current_categories = run_query(
                         "SELECT WeightPercentage FROM dbo.GradingCategories WHERE ClassSubjectID = %s",
                         (class_subject_id,), fetchall=True
@@ -350,8 +344,9 @@ else:
                         st.error(f"⚠️ Συνολική Βαρύτητα: **{total_weight:.1f}%**. Πρέπει το άθροισμα να ισούται ακριβώς με **100%**!")
                 else:
                     st.info("Δεν έχουν οριστεί κατηγορίες βαθμολόγησης ακόμα.")
+
             # ------------------------------------------------------------------
-            # TAB 2: ΕΙΣΑΓΩΓΗ ΜΑΘΗΤΩΝ ΑΠΟ EXCEL
+            # TAB 2: ΕΙΣΑΓΩΓΗ ΜΑΘΗΤΩΝ ΑΠΟ EXCEL (ΧΩΡΙΣ ID)
             # ------------------------------------------------------------------
             elif selected_tab == "👥 2. Εισαγωγή Μαθητών (Excel)":
                 st.subheader("Φόρτωση Μαθητών από Αρχείο Excel / CSV")
@@ -394,11 +389,11 @@ else:
                 )
                 if students:
                     st.write("### Υπάρχοντες Μαθητές")
-                    df_std = pd.DataFrame(students, columns=["ID", "A.M.", "Ονοματεπώνυμο"])
-                    st.dataframe(df_std, use_container_width=True)
+                    df_std = pd.DataFrame(students, columns=["ID", "A.M.", "Ονοματεπώνυμο"])[["A.M.", "Ονοματεπώνυμο"]]
+                    st.dataframe(df_std, use_container_width=True, hide_index=True)
 
-    # ------------------------------------------------------------------
-            # TAB 3: ΚΑΤΑΧΩΡΗΣΗ ΒΑΘΜΩΝ (ΜΕ ΠΛΗΡΕΣ ΥΨΟΣ ΧΩΡΙΣ SCROLLBAR)
+            # ------------------------------------------------------------------
+            # TAB 3: ΚΑΤΑΧΩΡΗΣΗ ΒΑΘΜΩΝ (ΧΩΡΙΣ ID ΣΤΟ GRID)
             # ------------------------------------------------------------------
             elif selected_tab == "📝 3. Καταχώρηση & Υπολογισμός Βαθμών":
                 st.subheader("Πίνακας Βαθμολογίας")
@@ -439,7 +434,7 @@ else:
                     data = []
                     for std in students:
                         std_id, am, name = std
-                        row = {"StudentID": std_id, "Α.Μ.": am or "", "Ονοματεπώνυμο": name}
+                        row = {"_StudentID": std_id, "Α.Μ.": am or "", "Ονοματεπώνυμο": name}
                         
                         weighted_sum = 0.0
                         total_weight = 0.0
@@ -464,14 +459,14 @@ else:
                     
                     st.caption("Συμπληρώστε ή τροποποιήστε τους βαθμούς στον πίνακα και πατήστε **'💾 Αποθήκευση Βαθμών'** στο τέλος.")
                     
-                    # Υπολογισμός δυναμικού ύψους για να χωράνε όλοι οι μαθητές
                     num_rows = len(df_editor)
                     calc_height = (num_rows + 1) * 35 + 40
                     
                     with st.form(key=f"grades_form_{class_subject_id}"):
                         edited_df = st.data_editor(
                             df_editor,
-                            disabled=["StudentID", "Α.Μ.", "Ονοματεπώνυμο", "Γενικός Βαθμός"],
+                            column_config={"_StudentID": None},
+                            disabled=["Α.Μ.", "Ονοματεπώνυμο", "Γενικός Βαθμός"],
                             hide_index=True,
                             use_container_width=True,
                             height=calc_height,
@@ -480,7 +475,6 @@ else:
                         
                         submit_save = st.form_submit_button("💾 Αποθήκευση Βαθμών", type="primary")
                     
-                    # --- POPUP DIALOG FUNCTION ---
                     @st.dialog("💾 Αποθήκευση Βαθμών σε Εξέλιξη")
                     def process_save_modal(df_data):
                         st.info("Παρακαλώ περιμένετε... Οι βαθμοί αποθηκεύονται στη βάση δεδομένων και υπολογίζεται ο Γενικός Βαθμός.")
@@ -489,7 +483,7 @@ else:
                             cursor = conn.cursor()
                             
                             for _, row in df_data.iterrows():
-                                std_id = row["StudentID"]
+                                std_id = row["_StudentID"]
                                 for cat_id, col_title in cat_map.items():
                                     val = row[col_title]
                                     score_val = float(val) if pd.notna(val) and str(val).strip() != "" else None
