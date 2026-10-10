@@ -9,16 +9,16 @@ import secrets
 import datetime
 
 # ==============================================================================
-# 0. ΑΥΤΟΜΑΤΟΣ ΕΛΕΓΧΟΣ LINK ΕΠΑΛΗΘΕΥΣΗΣ EMAIL ΑΠΟ URL
+# 0. ΑΥΤΟΜΑΤΟΣ ΕΛΕΓΧΟΣ LINK ΕΠΑΛΗΘΕΥΣΗΣ Ή ΕΠΑΝΑΦΟΡΑΣ ΑΠΟ URL
 # ==============================================================================
 st.set_page_config(page_title="Online Βαθμολόγιο", page_icon="📝", layout="wide")
 
 query_params = st.query_params
+
+# 1. Έλεγχος για Email Verification Link
 if "verify_token" in query_params:
     token_to_verify = query_params["verify_token"]
     st.query_params.clear()
-    
-    # Σύνδεση για την επαλήθευση
     try:
         server = st.secrets["DB_SERVER"]
         port = int(st.secrets.get("DB_PORT", 1433))
@@ -150,7 +150,6 @@ def register_user(fullname, email, password):
         (fullname, email, pwd_hash, v_token), commit=True
     )
     
-    # Δημιουργία ενεργού link με βάση το deployment URL σου
     verify_url = f"https://gradesbook.streamlit.app/?verify_token={v_token}"
     
     email_body = f"""Γεια σας {fullname},
@@ -177,6 +176,10 @@ if "user" not in st.session_state:
 if "auth_mode" not in st.session_state:
     st.session_state.auth_mode = "login"
 
+# Αν το URL περιέχει reset_token, γυρνάμε αυτόματα σε κατάσταση reset
+if "reset_token" in query_params:
+    st.session_state.auth_mode = "reset_password"
+
 if "flash_msg" in st.session_state:
     st.success(st.session_state.flash_msg)
     del st.session_state["flash_msg"]
@@ -187,22 +190,23 @@ if "flash_msg" in st.session_state:
 if st.session_state.user is None:
     st.title("📝 Δυναμικό Online Βαθμολόγιο")
     
-    # Οριζόντια επιλογή λειτουργίας (tabs style)
-    auth_choice = st.radio(
-        "Επιλογή:",
-        ["🔑 Σύνδεση", "👤 Εγγραφή", "🔄 Ξεχάσατε τον κωδικό;"],
-        horizontal=True,
-        label_visibility="collapsed"
-    )
-    
-    if "Σύνδεση" in auth_choice:
-        st.session_state.auth_mode = "login"
-    elif "Εγγραφή" in auth_choice:
-        st.session_state.auth_mode = "register"
-    else:
-        st.session_state.auth_mode = "forgot"
+    # Αν βρισκόμαστε σε φάση reset μέσω link, δεν εμφανίζουμε τα tabs πλοήγησης
+    if st.session_state.auth_mode != "reset_password":
+        auth_choice = st.radio(
+            "Επιλογή:",
+            ["🔑 Σύνδεση", "👤 Εγγραφή", "🔄 Ξεχάσατε τον κωδικό;"],
+            horizontal=True,
+            label_visibility="collapsed"
+        )
         
-    st.divider()
+        if "Σύνδεση" in auth_choice:
+            st.session_state.auth_mode = "login"
+        elif "Εγγραφή" in auth_choice:
+            st.session_state.auth_mode = "register"
+        else:
+            st.session_state.auth_mode = "forgot"
+            
+        st.divider()
 
     # 1. ΣΥΝΔΕΣΗ
     if st.session_state.auth_mode == "login":
@@ -240,14 +244,14 @@ if st.session_state.user is None:
                 else:
                     st.warning("Παρακαλώ συμπληρώστε όλα τα πεδία.")
 
-    # 3. ΞΕΧΑΣΑ ΤΟΝ ΚΩΔΙΚΟ (FORGOT PASSWORD)
+    # 3. ΞΕΧΑΣΑ ΤΟΝ ΚΩΔΙΚΟ (ΑΠΟΣΤΟΛΗ LINK)
     elif st.session_state.auth_mode == "forgot":
         st.subheader("Επαναφορά Κωδικού Πρόσβασης")
-        st.caption("Εισάγετε το email σας για να σας αποστείλουμε οδηγίες επαναφοράς.")
+        st.caption("Εισάγετε το email σας για να σας αποστείλουμε σύνδεσμο επαναφοράς.")
         
         with st.form("forgot_form"):
             reset_email = st.text_input("Email Λογαριασμού")
-            submitted = st.form_submit_button("Αποστολή Οδηγιών")
+            submitted = st.form_submit_button("Αποστολή Συνδέσμου")
             
             if submitted:
                 user = run_query("SELECT UserID, FullName FROM dbo.Users WHERE Email = %s", (reset_email,), fetchone=True)
@@ -260,52 +264,64 @@ if st.session_state.user is None:
                         (token, expires, user[0]), commit=True
                     )
                     
-                    email_body = f"Γεια σας {user[1]},\n\nΖητήσατε επαναφορά κωδικού.\nΟ κωδικός επαναφοράς σας είναι: {token}\n\nΑν δεν το ζητήσατε εσείς, αγνοήστε αυτό το μήνυμα."
+                    # Δημιουργία link επαναφοράς
+                    reset_url = f"https://gradesbook.streamlit.app/?reset_token={token}"
+                    
+                    email_body = f"""Γεια σας {user[1]},
+
+Ζητήσατε επαναφορά κωδικού πρόσβασης για το Online Βαθμολόγιο.
+Κάντε κλικ στον παρακάτω σύνδεσμο για να ορίσετε νέο κωδικό:
+
+{reset_url}
+
+Αν δεν ζητήσατε εσείς επαναφορά κωδικού, αγνοήστε αυτό το μήνυμα.
+"""
                     
                     if send_email(reset_email, "Επαναφορά Κωδικού - Online Βαθμολόγιο", email_body):
-                        st.success("✉️ Σας στάλθηκε email με τις οδηγίες επαναφοράς!")
-                        st.session_state.pending_reset_email = reset_email
+                        st.success("✉️ Σας στάλθηκε email με τον σύνδεσμο επαναφοράς!")
                     else:
-                        st.warning("⚠️ Δεν ήταν δυνατή η αποστολή email. Ο κωδικός επαναφοράς σας είναι:")
-                        st.code(token)
-                        st.session_state.pending_reset_email = reset_email
+                        st.warning("⚠️ Δεν ήταν δυνατή η αποστολή email. Σύνδεσμος επαναφοράς:")
+                        st.code(reset_url)
                 else:
                     st.error("Δεν βρέθηκε χρήστης με αυτό το email.")
 
-        if "pending_reset_email" in st.session_state:
-            st.divider()
-            st.subheader("Ορισμός Νέου Κωδικού")
-            with st.form("new_pass_form"):
-                entered_token = st.text_input("Κωδικός Επαναφοράς (Token)")
-                new_password = st.text_input("Νέος Κωδικός Πρόσβασης", type="password")
-                confirm_password = st.text_input("Επιβεβαίωση Νέου Κωδικού", type="password")
-                sub_reset = st.form_submit_button("Αλλαγή Κωδικού", type="primary")
-                
-                if sub_reset:
-                    if new_password != confirm_password:
-                        st.error("Οι κωδικοί δεν ταιριάζουν.")
-                    elif len(new_password) < 6:
-                        st.error("Ο κωδικός πρέπει να έχει τουλάχιστον 6 χαρακτήρες.")
-                    else:
-                        u_data = run_query(
-                            "SELECT UserID, ResetTokenExpires FROM dbo.Users WHERE Email = %s AND ResetToken = %s",
-                            (st.session_state.pending_reset_email, entered_token.strip()), fetchone=True
-                        )
-                        if u_data:
-                            if datetime.datetime.now() <= u_data[1]:
-                                new_hash = hash_password(new_password)
-                                run_query(
-                                    "UPDATE dbo.Users SET PasswordHash = %s, ResetToken = NULL, ResetTokenExpires = NULL WHERE UserID = %s",
-                                    (new_hash, u_data[0]), commit=True
-                                )
-                                st.success("🎉 Ο κωδικός σας άλλαξε επιτυχώς! Μπορείτε να συνδεθείτε.")
-                                del st.session_state["pending_reset_email"]
-                                st.session_state.auth_mode = "login"
-                                st.rerun()
-                            else:
-                                st.error("Ο κωδικός επαναφοράς έχει λήξει. Ζητήστε νέο.")
+    # 4. ΟΡΙΣΜΟΣ ΝΕΟΥ ΚΩΔΙΚΟΥ (ΜΕΣΩ URL LINK)
+    elif st.session_state.auth_mode == "reset_password":
+        st.subheader("🔑 Ορισμός Νέου Κωδικού Πρόσβασης")
+        st.caption("Πληκτρολογήστε τον νέο σας κωδικό παρακάτω.")
+        
+        token_from_url = query_params.get("reset_token", None)
+        
+        with st.form("new_pass_form_url"):
+            new_password = st.text_input("Νέος Κωδικός Πρόσβασης", type="password")
+            confirm_password = st.text_input("Επιβεβαίωση Νέου Κωδικού", type="password")
+            sub_reset = st.form_submit_button("Αλλαγή Κωδικού", type="primary")
+            
+            if sub_reset:
+                if new_password != confirm_password:
+                    st.error("Οι κωδικοί δεν ταιριάζουν.")
+                elif len(new_password) < 6:
+                    st.error("Ο κωδικός πρέπει να έχει τουλάχιστον 6 χαρακτήρες.")
+                else:
+                    u_data = run_query(
+                        "SELECT UserID, ResetTokenExpires FROM dbo.Users WHERE ResetToken = %s",
+                        (token_from_url.strip(),), fetchone=True
+                    )
+                    if u_data:
+                        if datetime.datetime.now() <= u_data[1]:
+                            new_hash = hash_password(new_password)
+                            run_query(
+                                "UPDATE dbo.Users SET PasswordHash = %s, ResetToken = NULL, ResetTokenExpires = NULL WHERE UserID = %s",
+                                (new_hash, u_data[0]), commit=True
+                            )
+                            st.query_params.clear()
+                            st.success("🎉 Ο κωδικός σας άλλαξε επιτυχώς! Μπορείτε πλέον να συνδεθείτε.")
+                            st.session_state.auth_mode = "login"
+                            st.rerun()
                         else:
-                            st.error("Λανθασμένος κωδικός επαναφοράς.")
+                            st.error("Ο σύνδεσμος επαναφοράς έχει λήξει. Ζητήστε νέο.")
+                    else:
+                        st.error("Μη έγκυρος ή ήδη χρησιμοποιημένος σύνδεσμος επαναφοράς.")
 
 # ------------------------------------------------------------------------------
 # ΚΥΡΙΩΣ ΕΦΑΡΜΟΓΗ (ΜΕΤΑ ΤΗ ΣΥΝΔΕΣΗ)
