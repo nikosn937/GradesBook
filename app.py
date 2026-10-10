@@ -90,23 +90,35 @@ def login_user(email, password):
     )
     if user:
         if not user[3]:  # IsVerified == 0
-            return None, "Το email σας δεν έχει επαληθευτεί. Παρακαλώ ελέγξτε τα εισερχόμενά σας."
+            return None, "⚠️ Το email σας δεν έχει επαληθευτεί. Επιλέξτε 'Επαλήθευση Email' για να ενεργοποιήσετε τον λογαριασμό σας."
         if check_password(password, user[2]):
             return {"id": user[0], "name": user[1], "email": email}, "Καλώς ήρθατε!"
         return None, "Λανθασμένος κωδικός πρόσβασης."
     return None, "Δεν βρέθηκε λογαριασμός με αυτό το email."
 
 def register_user(fullname, email, password):
-    existing = run_query("SELECT UserID FROM dbo.Users WHERE Email = %s", (email,), fetchone=True)
+    existing = run_query("SELECT UserID, IsVerified FROM dbo.Users WHERE Email = %s", (email,), fetchone=True)
     if existing:
-        return False, "Το email χρησιμοποιείται ήδη."
+        if existing[1] == 1:
+            return False, "Το email χρησιμοποιείται ήδη και είναι ενεργό."
+        else:
+            return False, "Ο λογαριασμός υπάρχει αλλά δεν έχει επαληθευτεί. Ελέγξτε το email σας."
     
     pwd_hash = hash_password(password)
+    v_token = secrets.token_urlsafe(32)
+    
     run_query(
-        "INSERT INTO dbo.Users (FullName, Email, PasswordHash, IsVerified) VALUES (%s, %s, %s, 1)",
-        (fullname, email, pwd_hash), commit=True
+        """INSERT INTO dbo.Users (FullName, Email, PasswordHash, IsVerified, VerificationToken) 
+           VALUES (%s, %s, %s, 0, %s)""",
+        (fullname, email, pwd_hash, v_token), commit=True
     )
-    return True, "Η εγγραφή ολοκληρώθηκε επιτυχώς! Μπορείτε να συνδεθείτε."
+    
+    email_body = f"Γεια σας {fullname},\n\nΣας ευχαριστούμε για την εγγραφή σας στο Online Βαθμολόγιο.\nΟ κωδικός επαλήθευσης (Verification Token) του λογαριασμού σας είναι: {v_token}\n\nΕισάγετε αυτόν τον κωδικό στην οθόνη επαλήθευσης για να ενεργοποιήσετε τον λογαριασμό σας."
+    
+    if send_email(email, "Επαλήθευση Email - Online Βαθμολόγιο", email_body):
+        return True, "🎉 Η εγγραφή σας ολοκληρώθηκε! Σας στάλθηκε email με τον κωδικό επαλήθευσης."
+    else:
+        return True, f"⚠️ Η εγγραφή έγινε, αλλά η αποστολή email απέτυχε. Ο κωδικός επαλήθευσης (token) είναι: {v_token}"
 
 # ==============================================================================
 # 4. INTERFACE / UI APP
@@ -124,24 +136,25 @@ if "flash_msg" in st.session_state:
     del st.session_state["flash_msg"]
 
 # ------------------------------------------------------------------------------
-# ΣΕΛΙΔΕΣ ΣΥΝΔΕΣΗΣ / ΕΓΓΡΑΦΗΣ / ΕΠΑΝΑΦΟΡΑΣ ΚΩΔΙΚΟΥ
+# ΣΕΛΙΔΕΣ ΣΥΝΔΕΣΗΣ / ΕΓΓΡΑΦΗΣ / ΕΠΑΛΗΘΕΥΣΗΣ / ΕΠΑΝΑΦΟΡΑΣ ΚΩΔΙΚΟΥ
 # ------------------------------------------------------------------------------
 if st.session_state.user is None:
     st.title("📝 Δυναμικό Online Βαθμολόγιο")
     
-    # Οριζόντια επιλογή λειτουργίας (μοιάζει με tabs)
+    # Οριζόντια επιλογή λειτουργίας (tabs style)
     auth_choice = st.radio(
         "Επιλογή:",
-        ["🔑 Σύνδεση", "👤 Εγγραφή Εκπαιδευτικού", "🔄 Ξεχάσατε τον κωδικό;"],
+        ["🔑 Σύνδεση", "👤 Εγγραφή", "✉️ Επαλήθευση Email", "🔄 Ξεχάσατε τον κωδικό;"],
         horizontal=True,
         label_visibility="collapsed"
     )
     
-    # Συγχρονισμός με το session_state
     if "Σύνδεση" in auth_choice:
         st.session_state.auth_mode = "login"
     elif "Εγγραφή" in auth_choice:
         st.session_state.auth_mode = "register"
+    elif "Επαλήθευση" in auth_choice:
+        st.session_state.auth_mode = "verify"
     else:
         st.session_state.auth_mode = "forgot"
         
@@ -178,14 +191,33 @@ if st.session_state.user is None:
                     ok, msg = register_user(fullname, reg_email, reg_pass)
                     if ok:
                         st.success(msg)
-                        st.session_state.auth_mode = "login"
-                        st.rerun()
                     else:
                         st.error(msg)
                 else:
                     st.warning("Παρακαλώ συμπληρώστε όλα τα πεδία.")
 
-    # 3. ΞΕΧΑΣΑ ΤΟΝ ΚΩΔΙΚΟ (FORGOT PASSWORD)
+    # 3. ΕΠΑΛΗΘΕΥΣΗ EMAIL
+    elif st.session_state.auth_mode == "verify":
+        st.subheader("Επαλήθευση Λογαριασμού Email")
+        st.caption("Εισάγετε το email σας και τον κωδικό επαλήθευσης (token) που λάβατε.")
+        
+        with st.form("verify_form"):
+            v_email = st.text_input("Email")
+            v_token = st.text_input("Κωδικός Επαλήθευσης (Token)")
+            sub_verify = st.form_submit_button("Ενεργοποίηση Λογαριασμού", type="primary")
+            
+            if sub_verify:
+                user = run_query("SELECT UserID, IsVerified FROM dbo.Users WHERE Email = %s AND VerificationToken = %s", (v_email.strip(), v_token.strip()), fetchone=True)
+                if user:
+                    if user[1] == 1:
+                        st.info("Ο λογαριασμός σας είναι ήδη επαληθευμένος. Μπορείτε να συνδεθείτε.")
+                    else:
+                        run_query("UPDATE dbo.Users SET IsVerified = 1, VerificationToken = NULL WHERE UserID = %s", (user[0],), commit=True)
+                        st.success("🎉 Ο λογαριασμός σας ενεργοποιήθηκε επιτυχώς! Μπορείτε πλέον να συνδεθείτε.")
+                else:
+                    st.error("Λανθασμένο email ή κωδικός επαλήθευσης.")
+
+    # 4. ΞΕΧΑΣΑ ΤΟΝ ΚΩΔΙΚΟ (FORGOT PASSWORD)
     elif st.session_state.auth_mode == "forgot":
         st.subheader("Επαναφορά Κωδικού Πρόσβασης")
         st.caption("Εισάγετε το email σας για να σας αποστείλουμε οδηγίες επαναφοράς.")
@@ -251,6 +283,7 @@ if st.session_state.user is None:
                                 st.error("Ο κωδικός επαναφοράς έχει λήξει. Ζητήστε νέο.")
                         else:
                             st.error("Λανθασμένος κωδικός επαναφοράς.")
+
 # ------------------------------------------------------------------------------
 # ΚΥΡΙΩΣ ΕΦΑΡΜΟΓΗ (ΜΕΤΑ ΤΗ ΣΥΝΔΕΣΗ)
 # ------------------------------------------------------------------------------
@@ -515,7 +548,7 @@ else:
                                             (class_subject_id, am, full_name), commit=True
                                         )
                                         count += 1
-                                st.session_state.flash_msg = f"🎉 Εισήχθησαν επιτυχώς {count} μαθητές τη βάση δεδομένων!"
+                                st.session_state.flash_msg = f"🎉 Εισήχθησαν επιτυχώς {count} μαθητές στη βάση δεδομένων!"
                                 st.rerun()
                         else:
                             st.error("Δεν βρέθηκε η στήλη 'Ονοματεπώνυμο' στο αρχείο.")
